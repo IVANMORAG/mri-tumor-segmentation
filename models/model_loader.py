@@ -5,8 +5,8 @@ from utils.custom_metrics import tversky, tversky_loss, focal_tversky
 
 # Configura esto con tus IDs reales
 MODEL_IDS = {
-    'classification': '1X6g-dKDkdJaRwsQb5PyCyYOpc-F8u2Gj_weights.hdf5',
-    'segmentation': '1bliKGiqJq8c-i6XZu-oT_r6LTtbqjHe-_weights_seg.hdf5'
+    'classification': os.getenv('CLASSIFICATION_MODEL_ID'),
+    'segmentation': os.getenv('SEGMENTATION_MODEL_ID')
 }
 
 def load_model_from_drive(drive, file_id, model_name):
