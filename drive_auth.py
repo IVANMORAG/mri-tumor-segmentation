@@ -1,26 +1,22 @@
 import os
+import json
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 
 def authenticate():
-    gauth = GoogleAuth()
-    
-    # Configura rutas para Render
-    client_secrets = os.getenv('PYDRIVE_CLIENT_SECRET_FILE', 'client_secrets.json')
-    credentials_file = os.getenv('PYDRIVE_CREDENTIALS_FILE', 'mycreds.txt')
-    
-    gauth.LoadCredentialsFile(credentials_file)
-    
-    if gauth.credentials is None:
-        if os.path.exists(client_secrets):
-            gauth.LocalWebserverAuth()
-        else:
-            raise Exception("Archivo client_secrets.json no encontrado")
-    elif gauth.access_token_expired:
-        gauth.Refresh()
-    else:
-        gauth.Authorize()
-    
-    gauth.SaveCredentialsFile(credentials_file)
-    
-    return GoogleDrive(gauth)
+    try:
+        # 1. Carga las credenciales desde variables de entorno
+        service_account_info = os.getenv('GOOGLE_SERVICE_ACCOUNT')
+        if not service_account_info:
+            raise ValueError("Variable GOOGLE_SERVICE_ACCOUNT no configurada")
+        
+        # 2. Configura la autenticación
+        gauth = GoogleAuth()
+        gauth.service_account_info = json.loads(service_account_info)
+        gauth.service_account_credentials = json.loads(service_account_info)
+        gauth.CommandLineAuth()  # Autenticación no interactiva
+        
+        return GoogleDrive(gauth)
+    except Exception as e:
+        print(f"❌ Error de autenticación: {str(e)}")
+        raise
