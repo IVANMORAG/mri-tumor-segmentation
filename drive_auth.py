@@ -5,18 +5,26 @@ from pydrive2.drive import GoogleDrive
 
 def authenticate():
     try:
-        # 1. Carga las credenciales desde variables de entorno
-        service_account_info = os.getenv('GOOGLE_SERVICE_ACCOUNT')
-        if not service_account_info:
-            raise ValueError("Variable GOOGLE_SERVICE_ACCOUNT no configurada")
+        # 1. Carga las credenciales como SERVICE ACCOUNT
+        service_account_json = os.getenv('GOOGLE_SERVICE_ACCOUNT')
+        if not service_account_json:
+            raise ValueError("❌ Falta la variable GOOGLE_SERVICE_ACCOUNT")
         
-        # 2. Configura la autenticación
+        # 2. Configuración directa sin interacción
         gauth = GoogleAuth()
-        gauth.service_account_info = json.loads(service_account_info)
-        gauth.service_account_credentials = json.loads(service_account_info)
-        gauth.CommandLineAuth()  # Autenticación no interactiva
+        
+        # Forzamos el modo Service Account
+        gauth.service_account_info = json.loads(service_account_json)
+        gauth.settings["client_config_backend"] = "service"
+        gauth.settings["service_config"] = {
+            "client_json": service_account_json
+        }
+        
+        # Autenticación silenciosa
+        gauth.ServiceAuth()
         
         return GoogleDrive(gauth)
+        
     except Exception as e:
-        print(f"❌ Error de autenticación: {str(e)}")
+        print(f"❌ Error grave en autenticación: {str(e)}")
         raise
