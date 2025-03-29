@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brain Tumor Detection</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <header>
+        <h1>Brain Tumor Detection</h1>
+        <p>Upload an MRI image to analyze for brain tumors</p>
+    </header>
+    
+    <main>
+        <div class="upload-container">
+            <label for="fileInput" class="upload-label">Choose MRI Image</label>
+            <input type="file" id="fileInput" accept="image/png, image/jpeg, image/jpg">
+            <p id="fileName"></p>
+            <button id="analyzeBtn" disabled>Analyze Image</button>
+        </div>
+        
+        <div id="loading">
+            <div class="loader"></div>
+            <p>Processing image... Please wait.</p>
+        </div>
+        
+        <div id="results" class="results">
+            <h2>Analysis Results</h2>
+            <div id="diagnosis" class="diagnosis"></div>
+            
+            <div class="image-grid">
+                <div class="image-container">
+                    <h3>Original MRI</h3>
+                    <img id="originalImg" src="" alt="Original MRI">
+                    <p class="image-caption">Imagen MRI original subida</p>
+                </div>
+                
+                <div class="image-container" id="maskContainer">
+                    <h3>Segmentation Mask</h3>
+                    <div class="mask-display">
+                        <img id="maskImg" src="" alt="Segmentation Mask">
+                    </div>
+                    <p class="image-caption">Áreas blancas indican posible tumor</p>
+                </div>
+                
+                <div class="image-container" id="overlayContainer">
+                    <h3>Tumor Detection</h3>
+                    <img id="overlayImg" src="" alt="MRI with Tumor Detection">
+                    <p class="image-caption">Áreas rojas muestran tumor detectado</p>
+                </div>
+            </div>
+        </div>
+
+        <div id="history-section">
+            <h2>Analysis History</h2>
+            <div id="history-container" class="image-grid history-grid">
+                <!-- Las imágenes del historial se cargarán aquí dinámicamente -->
+            </div>
+        </div>
+        
+        <div id="analysisModal">
+            <div class="close-modal">&times;</div>
+            <div class="modal-content">
+                <h2>Analysis Details</h2>
+                <div id="modal-content" class="image-grid">
+                    <!-- Contenido del análisis se cargará aquí -->
+                </div>
+                <button id="deleteAnalysisBtn">Delete Analysis</button>
+            </div>
+        </div>
+    </main>
+    
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
