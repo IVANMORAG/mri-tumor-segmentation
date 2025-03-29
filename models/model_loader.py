@@ -2,6 +2,8 @@ from drive_auth import authenticate
 import io
 import tensorflow as tf
 from utils.custom_metrics import tversky, tversky_loss, focal_tversky
+import os
+
 
 # Configura esto con tus IDs reales
 MODEL_IDS = {
