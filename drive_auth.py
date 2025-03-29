@@ -5,23 +5,20 @@ from pydrive2.drive import GoogleDrive
 
 def authenticate():
     try:
-        # 1. Obtener el JSON como string desde variables de entorno
-        service_account_str = os.getenv('GOOGLE_SERVICE_ACCOUNT')
-        if not service_account_str:
-            raise ValueError("❌ Variable GOOGLE_SERVICE_ACCOUNT no configurada")
+        # 1. Obtener JSON como string
+        sa_json_str = os.getenv('GOOGLE_SERVICE_ACCOUNT')
+        if not sa_json_str:
+            raise ValueError("❌ GOOGLE_SERVICE_ACCOUNT no está configurado")
 
-        # 2. Convertir a dict (validando que sea JSON válido)
-        try:
-            service_account_info = json.loads(service_account_str)
-        except json.JSONDecodeError:
-            raise ValueError("❌ El JSON de credenciales no es válido")
-
-        # 3. Configuración COMPLETA para PyDrive2
+        # 2. Parsear a dict para extraer el email
+        sa_info = json.loads(sa_json_str)
+        
+        # 3. Configuración EXACTA que necesita PyDrive2
         settings = {
             "client_config_backend": "service",
             "service_config": {
-                "client_json": service_account_str,  # ¡Ahora como string!
-                "client_user_email": service_account_info['client_email']
+                "client_json": sa_json_str,  # String original
+                "client_user_email": sa_info['client_email']
             }
         }
 
@@ -32,5 +29,5 @@ def authenticate():
         return GoogleDrive(gauth)
         
     except Exception as e:
-        print(f"❌ Error crítico en autenticación: {str(e)}")
+        print(f"❌ Error crítico: {str(e)}")
         raise
