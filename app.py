@@ -313,6 +313,9 @@ if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
     
+    # Configuración para Render
+    port = int(os.environ.get("PORT", 5001))
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     
-    print("🚀 Iniciando servidor Flask...")
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    print(f"🚀 Iniciando servidor Flask en puerto {port}...")
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
