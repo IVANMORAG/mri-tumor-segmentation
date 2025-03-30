@@ -1,10 +1,10 @@
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
+from flask_cors import CORS
 import cv2
 from datetime import datetime
 import traceback
 import tempfile
-import time
 import os
 import numpy as np
 import tensorflow as tf
@@ -16,15 +16,16 @@ import absl.logging
 absl.logging.set_verbosity(absl.logging.ERROR)
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
+# Inicialización de la app Flask con CORS
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Habilitar CORS para todos los dominios en todas las rutas
 
 # Configuración
 UPLOAD_FOLDER = 'static/uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# 1. Funciones personalizadas
+# 1. Funciones personalizadas para los modelos
 def tversky(y_true, y_pred, smooth=1e-6):
     y_true_pos = K.flatten(y_true)
     y_pred_pos = K.flatten(y_pred)
@@ -82,7 +83,7 @@ def load_model_from_parts(parts_folder, custom_objects):
         traceback.print_exc()
         return None
 
-# Inicialización de modelos
+# Variables globales para los modelos
 model_class = None
 model_seg = None
 
@@ -102,7 +103,7 @@ def initialize_models():
         print(f"❌ Error inicializando modelos: {str(e)}")
         return False
 
-# 3. Funciones de procesamiento
+# 3. Funciones de procesamiento de imágenes
 def preprocess_image(image_path):
     """Preprocesamiento optimizado de imágenes"""
     try:
@@ -127,7 +128,7 @@ def postprocess_mask(mask):
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 def create_overlay(original_img, mask):
-    """Overlay optimizado"""
+    """Overlay optimizado con transparencia"""
     overlay_img = cv2.cvtColor(original_img, cv2.COLOR_RGB2RGBA) if len(original_img.shape) == 3 else cv2.cvtColor(original_img, cv2.COLOR_GRAY2RGBA)
     red_mask = np.zeros_like(overlay_img)
     red_mask[mask > 0] = [255, 0, 0, 128]
@@ -160,14 +161,19 @@ def predict_tumor(image_path, model_class, model_seg):
         print(f"Error en predict_tumor: {str(e)}")
         raise
 
-# 4. Endpoints
+# 4. Endpoints de la API
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/health')
 def health_check():
-    return jsonify({"status": "active", "timestamp": datetime.now().isoformat()})
+    """Endpoint para health checks y mantener la app activa"""
+    return jsonify({
+        "status": "active",
+        "timestamp": datetime.now().isoformat(),
+        "models_loaded": model_class is not None
+    })
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -236,10 +242,12 @@ def predict():
 
 @app.route('/static/uploads/<path:filename>')
 def uploaded_file(filename):
+    """Sirve archivos subidos"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/api/history')
 def get_history():
+    """Obtiene el historial de análisis"""
     try:
         analyses = []
         upload_dir = app.config['UPLOAD_FOLDER']
@@ -263,6 +271,7 @@ def get_history():
 
 @app.route('/api/delete/<analysis_id>', methods=['DELETE'])
 def delete_analysis(analysis_id):
+    """Elimina un análisis específico"""
     try:
         folder_path = os.path.join(app.config['UPLOAD_FOLDER'], analysis_id)
         if os.path.exists(folder_path):
@@ -275,15 +284,17 @@ def delete_analysis(analysis_id):
 
 @app.before_request
 def before_request():
+    """Middleware para validar el tamaño de archivos"""
     max_size = 5 * 1024 * 1024  # 5MB
     if request.content_length and request.content_length > max_size:
         return jsonify({"error": "El archivo es demasiado grande (máx 5MB)"}), 413
 
 if __name__ == '__main__':
+    # Configuración inicial
     if not os.path.exists('templates'):
         os.makedirs('templates')
     
-    # Inicialización ligera
+    # Inicialización ligera del modelo principal
     initialize_models()
     
     # Configuración para Render
