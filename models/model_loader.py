@@ -1,8 +1,9 @@
 from drive_auth import authenticate
 import io
+import os
+import tempfile
 import tensorflow as tf
 from utils.custom_metrics import tversky, tversky_loss, focal_tversky
-import os
 
 
 # Configura esto con tus IDs reales
@@ -16,26 +17,27 @@ def load_model_from_drive(drive, file_id, model_name):
         # Crea un archivo manejador
         model_file = drive.CreateFile({'id': file_id})
         
-        # Crea un buffer en memoria
-        model_buffer = io.BytesIO()
-        model_file.GetContentIOBuffer(model_buffer)
-        
-        # Mueve el cursor al inicio del buffer
-        model_buffer.seek(0)
-        
-        # Carga el modelo con las métricas personalizadas
-        model = tf.keras.models.load_model(
-            model_buffer,
-            custom_objects={
-                'tversky_loss': tversky_loss,
-                'focal_tversky': focal_tversky,
-                'tversky': tversky
-            },
-            compile=False
-        )
-        
-        print(f"✅ {model_name} cargado desde Google Drive")
-        return model
+        # Crea un directorio temporal
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Define la ruta del archivo temporal
+            temp_model_path = os.path.join(temp_dir, f"{model_name}.h5")
+            
+            # Descarga el archivo al directorio temporal
+            model_file.GetContentFile(temp_model_path)
+            
+            # Carga el modelo con las métricas personalizadas
+            model = tf.keras.models.load_model(
+                temp_model_path,
+                custom_objects={
+                    'tversky_loss': tversky_loss,
+                    'focal_tversky': focal_tversky,
+                    'tversky': tversky
+                },
+                compile=False
+            )
+            
+            print(f"✅ {model_name} cargado desde Google Drive")
+            return model
     except Exception as e:
         print(f"❌ Error cargando {model_name}: {str(e)}")
         raise
