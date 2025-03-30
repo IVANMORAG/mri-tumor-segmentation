@@ -150,51 +150,50 @@ def create_overlay(original_img, mask):
     # Combinar overlay
     return cv2.addWeighted(overlay_img, 1, red_mask, 0.7, 0)
 
-# 5. Función de predicción mejorada
 def predict_tumor(image_path, model_class, model_seg):
     try:
-        # Preprocesamiento más rápido
+        # 1. Preprocesamiento rápido
         img = cv2.imread(image_path, cv2.IMREAD_COLOR)
         if img is None:
             img = io.imread(image_path)
         
+        # Reducción de tamaño para procesamiento más rápido
         img = cv2.resize(img, (256, 256))
         img = img.astype(np.float32) / 255.0
         img = (img - img.mean()) / (img.std() + 1e-7)
         img = np.expand_dims(img, axis=0)
         
-        # Predicción con timeout
-        try:
-            class_pred = model_class.predict(img, verbose=0)
-            has_tumor = np.argmax(class_pred) == 1
-            
-            if not has_tumor:
-                return {
-                    'has_tumor': False,
-                    'accuracy': float(np.max(class_pred)),
-                    'original_img': None,
-                    'mask': None,
-                    'overlay_img': None
-                }
-            
-            seg_pred = model_seg.predict(img, verbose=0)
-            mask = (seg_pred.squeeze() > 0.3).astype(np.uint8) * 255
+        # 2. Predicción de clasificación
+        class_pred = model_class.predict(img, verbose=0, batch_size=1)
+        has_tumor = np.argmax(class_pred) == 1
+        accuracy = float(np.max(class_pred))
+        
+        if not has_tumor:
             return {
-                'has_tumor': True,
-                'accuracy': float(np.max(class_pred)),
-                'original_img': cv2.imread(image_path),
-                'mask': mask,
-                'overlay_img': create_overlay(cv2.imread(image_path), mask)
+                'has_tumor': False,
+                'accuracy': accuracy,
+                'mask': None,
+                'overlay_img': None
             }
-        except Exception as e:
-            print(f"Prediction timeout: {str(e)}")
-            return None
-            
+        
+        # 3. Predicción de segmentación (solo si hay tumor)
+        seg_pred = model_seg.predict(img, verbose=0, batch_size=1)
+        mask = (seg_pred.squeeze() > 0.3).astype(np.uint8) * 255
+        
+        # 4. Postprocesamiento mínimo
+        original_img = cv2.imread(image_path)
+        mask_resized = cv2.resize(mask, (original_img.shape[1], original_img.shape[0]))
+        
+        return {
+            'has_tumor': True,
+            'accuracy': accuracy,
+            'mask': mask_resized,
+            'overlay_img': create_overlay(original_img, mask_resized)
+        }
+        
     except Exception as e:
-        print(f"Error during prediction: {str(e)}")
+        print(f"Error en predict_tumor: {str(e)}")
         raise
-
-
 
 # 6. Rutas de la API
 @app.route('/')
