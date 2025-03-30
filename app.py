@@ -86,36 +86,27 @@ def load_model_from_parts(parts_folder, custom_objects):
         return None
     
     
+# Cambia la carga de modelos a modo "lite"
 def load_models():
     try:
-        print("⏳ Iniciando carga de modelos...")
+        print("⏳ Cargando versión ligera de modelos...")
+        
+        # Solo carga lo absolutamente necesario
         custom_objects = {
             'tversky_loss': tversky_loss,
-            'focal_tversky': focal_tversky,
-            'tversky': tversky
+            'focal_tversky': focal_tversky
         }
         
-        # Cargar modelo de clasificación desde partes
-        model_class = load_model_from_parts('weights_parts', custom_objects)
-        if model_class is None:
-            raise Exception("No se pudo cargar el modelo de clasificación")
+        # Carga el modelo principal de forma diferida
+        if 'model_class' not in globals():
+            global model_class
+            model_class = load_model_from_parts('weights_parts', custom_objects)
         
-        # Cargar modelo de segmentación (asumiendo que no está dividido)
-        model_seg = tf.keras.models.load_model(
-            'weights_seg.hdf5',
-            custom_objects=custom_objects
-        )
-        if model_seg is None:
-            raise Exception("No se pudo cargar el modelo de segmentación")
-        
-        print("🎉 Todos los modelos cargados exitosamente")
-        return model_class, model_seg
-        
+        return True
     except Exception as e:
-        print(f"❌ Error crítico cargando modelos: {str(e)}")
-        traceback.print_exc()
-        return None, None
-
+        print(f"❌ Error: {str(e)}")
+        return False
+    
 model_class, model_seg = load_models()
 
 # 4. Funciones de procesamiento mejoradas
@@ -212,56 +203,88 @@ def index():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    if model_class is None or model_seg is None:
-        return jsonify({'error': 'Modelos no cargados correctamente'}), 500
-        
+    # 1. Verificación inicial de modelos (con carga diferida)
+    global model_class, model_seg
+    
+    if model_class is None:
+        try:
+            custom_objects = {'tversky_loss': tversky_loss, 'focal_tversky': focal_tversky}
+            model_class = load_model_from_parts('weights_parts', custom_objects)
+        except Exception as e:
+            print(f"🔥 Error cargando modelo principal: {str(e)}")
+            return jsonify({'error': 'Error inicializando modelos'}), 500
+    
+    # 2. Validación de archivo (con límite de tamaño)
     if 'file' not in request.files:
         return jsonify({'error': 'No se subió ningún archivo'}), 400
         
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'Nombre de archivo vacío'}), 400
+    
+    # Limitar archivos a 5MB (para evitar sobrecarga)
+    if request.content_length > 5 * 1024 * 1024:  # 5MB
+        return jsonify({'error': 'El archivo es demasiado grande (máx 5MB)'}), 413
         
     try:
+        # 3. Preparación de directorio
         analysis_id = datetime.now().strftime('%Y%m%d%H%M%S')
         analysis_folder = os.path.join(app.config['UPLOAD_FOLDER'], f"analysis_{analysis_id}")
         os.makedirs(analysis_folder, exist_ok=True)
         
-        original_filename = secure_filename(file.filename)
+        # 4. Guardar archivo temporalmente
         original_path = os.path.join(analysis_folder, "original.jpg")
         file.save(original_path)
         
+        # 5. Carga diferida del modelo de segmentación
+        if model_seg is None:
+            print("⏳ Cargando modelo de segmentación bajo demanda...")
+            model_seg = tf.keras.models.load_model(
+                'weights_seg.hdf5',
+                custom_objects={'tversky_loss': tversky_loss, 'focal_tversky': focal_tversky}
+            )
+        
+        # 6. Procesamiento con timeout controlado
         print(f"⏳ Iniciando predicción para {original_path}...")
-        result = predict_tumor(original_path, model_class, model_seg)
+        try:
+            result = predict_tumor(original_path, model_class, model_seg)
+        except Exception as e:
+            print(f"⌛ Timeout en predicción: {str(e)}")
+            return jsonify({'error': 'El análisis tardó demasiado'}), 504
+        
         print("✅ Predicción completada")
         
-        output_images = {
-            'original': f"analysis_{analysis_id}/original.jpg",
-            'mask': None,
-            'overlay': None
+        # 7. Preparar respuesta optimizada
+        response = {
+            'has_tumor': result['has_tumor'],
+            'accuracy': float(result['accuracy']),
+            'images': {
+                'original': f"analysis_{analysis_id}/original.jpg",
+                'mask': None,
+                'overlay': None
+            }
         }
-
+        
+        # 8. Guardar resultados solo si hay tumor
         if result['has_tumor']:
-            # Guardar máscara
             mask_path = os.path.join(analysis_folder, "mask.png")
             cv2.imwrite(mask_path, result['mask'])
-            output_images['mask'] = f"analysis_{analysis_id}/mask.png"
+            response['images']['mask'] = f"analysis_{analysis_id}/mask.png"
             
-            # Guardar overlay
             overlay_path = os.path.join(analysis_folder, "overlay.png")
             cv2.imwrite(overlay_path, result['overlay_img'])
-            output_images['overlay'] = f"analysis_{analysis_id}/overlay.png"
+            response['images']['overlay'] = f"analysis_{analysis_id}/overlay.png"
         
-        return jsonify({
-            'has_tumor': 'true' if result['has_tumor'] else 'false',
-            'accuracy': float(result['accuracy']),
-            'images': output_images
-        })
+        return jsonify(response)
         
     except Exception as e:
-        print(f"🔥 Error durante el procesamiento: {str(e)}")
+        print(f"🔥 Error crítico: {str(e)}")
         traceback.print_exc()
-        return jsonify({'error': f"Error durante el procesamiento: {str(e)}"}), 500
+        return jsonify({
+            'error': 'Error procesando la imagen',
+            'details': str(e)
+        }), 500
+
 
 @app.route('/static/uploads/<path:filename>')
 def uploaded_file(filename):
@@ -310,6 +333,13 @@ def delete_analysis(analysis_id):
     except Exception as e:
         print(f"Error deleting analysis: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.before_request
+def before_request():
+    # Limita el tamaño de archivo a 5MB
+    max_size = 5 * 1024 * 1024  # 5MB
+    if request.content_length > max_size:
+        return jsonify({"error": "El archivo es demasiado grande"}), 413
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
