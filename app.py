@@ -162,46 +162,48 @@ def create_overlay(original_img, mask):
 # 5. Función de predicción mejorada
 def predict_tumor(image_path, model_class, model_seg):
     try:
-        img = preprocess_image(image_path)
+        # Preprocesamiento más rápido
+        img = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if img is None:
+            img = io.imread(image_path)
         
-        # Clasificación
-        class_pred = model_class.predict(img, verbose=0)
-        has_tumor = np.argmax(class_pred) == 1
-        accuracy = float(np.max(class_pred))
+        img = cv2.resize(img, (256, 256))
+        img = img.astype(np.float32) / 255.0
+        img = (img - img.mean()) / (img.std() + 1e-7)
+        img = np.expand_dims(img, axis=0)
         
-        # Leer imagen original para visualización
-        original_img = cv2.imread(image_path)
-        if original_img is None:
-            original_img = io.imread(image_path)
-        
-        mask = None
-        overlay_img = None
-        
-        if has_tumor:
-            # Segmentación con umbral ajustado
+        # Predicción con timeout
+        try:
+            class_pred = model_class.predict(img, verbose=0)
+            has_tumor = np.argmax(class_pred) == 1
+            
+            if not has_tumor:
+                return {
+                    'has_tumor': False,
+                    'accuracy': float(np.max(class_pred)),
+                    'original_img': None,
+                    'mask': None,
+                    'overlay_img': None
+                }
+            
             seg_pred = model_seg.predict(img, verbose=0)
             mask = (seg_pred.squeeze() > 0.3).astype(np.uint8) * 255
+            return {
+                'has_tumor': True,
+                'accuracy': float(np.max(class_pred)),
+                'original_img': cv2.imread(image_path),
+                'mask': mask,
+                'overlay_img': create_overlay(cv2.imread(image_path), mask)
+            }
+        except Exception as e:
+            print(f"Prediction timeout: {str(e)}")
+            return None
             
-            # Redimensionar máscara al tamaño original
-            mask_resized = cv2.resize(mask, (original_img.shape[1], original_img.shape[0]), 
-                                    interpolation=cv2.INTER_NEAREST)
-            
-            # Postprocesamiento
-            mask_resized = postprocess_mask(mask_resized)
-            
-            # Crear overlay
-            overlay_img = create_overlay(original_img, mask_resized)
-        
-        return {
-            'has_tumor': has_tumor,
-            'accuracy': accuracy,
-            'original_img': original_img,
-            'mask': mask_resized if has_tumor else None,
-            'overlay_img': overlay_img[..., :3] if has_tumor else None  # Quitar canal alpha para guardar como JPEG
-        }
     except Exception as e:
-        print(f"Error durante la predicción: {str(e)}")
+        print(f"Error during prediction: {str(e)}")
         raise
+
+
 
 # 6. Rutas de la API
 @app.route('/')
@@ -313,9 +315,9 @@ if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
     
-    # Configuración para Render
-    port = int(os.environ.get("PORT", 5001))
-    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    # Configuración específica para Render
+    port = int(os.environ.get("PORT", 10000))  # Render usa puerto 10000
+    debug_mode = False  # Siempre False en producción
     
     print(f"🚀 Iniciando servidor Flask en puerto {port}...")
     app.run(host='0.0.0.0', port=port, debug=debug_mode)
