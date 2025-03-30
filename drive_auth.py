@@ -10,35 +10,42 @@ def authenticate():
         if not service_account_str:
             raise ValueError("❌ Variable GOOGLE_SERVICE_ACCOUNT no configurada")
 
-        # 2. Parsear JSON y formatear clave privada
+        # 2. Parsear JSON y formatear clave privada CORRECTAMENTE
         service_account_info = json.loads(service_account_str)
         
-        # Formatear correctamente la clave privada (¡ESTE ES EL CAMBIO CLAVE!)
+        # Formateo PROFESIONAL de la clave privada
         private_key = service_account_info['private_key']
-        if '\\n' not in private_key and '\n' not in private_key:
-            # Insertar saltos de línea cada 64 caracteres (formato PEM estándar)
-            formatted_key = '\n'.join([private_key[i:i+64] for i in range(0, len(private_key), 64)])
+        if '-----BEGIN PRIVATE KEY-----' not in private_key:
+            # Limpiar caracteres extraños y formatear como PEM válido
+            private_key = private_key.replace('\\n', '\n').replace(' ', '')
+            if '\n' not in private_key:
+                private_key = '\n'.join([private_key[i:i+64] for i in range(0, len(private_key), 64)])
             service_account_info['private_key'] = (
                 "-----BEGIN PRIVATE KEY-----\n" +
-                formatted_key +
-                "\n-----END PRIVATE KEY-----"
+                private_key +
+                "\n-----END PRIVATE KEY-----\n"
             )
         
-        # 3. Configuración para PyDrive2
+        # 3. Configuración ÓPTIMA para PyDrive2
         settings = {
             "client_config_backend": "service",
             "service_config": {
-                "client_json": json.dumps(service_account_info),
+                "client_json": service_account_info,  # Como dict, no string
                 "client_user_email": service_account_info['client_email']
             }
         }
 
-        # 4. Autenticación
+        # 4. Autenticación con manejo de errores mejorado
         gauth = GoogleAuth(settings=settings)
-        gauth.ServiceAuth()
+        try:
+            gauth.ServiceAuth()
+        except Exception as auth_error:
+            if "DECODER routines" in str(auth_error):
+                raise ValueError("Formato de clave privada inválido. Verifica que el JSON esté completo y bien formateado")
+            raise
         
         return GoogleDrive(gauth)
         
     except Exception as e:
-        print(f"❌ Error crítico en autenticación: {str(e)}")
+        print(f"❌ Error FATAL en autenticación: {str(e)}")
         raise
