@@ -3,18 +3,18 @@ from werkzeug.utils import secure_filename
 import cv2
 from datetime import datetime
 import traceback
-import subprocess
-import threading
 import tempfile
 import time
-import requests
-from flask_cors import CORS
 import os
 import numpy as np
 import tensorflow as tf
 from tensorflow.keras import backend as K
 from skimage import io
-from io import BytesIO
+import absl.logging
+
+# Configuración para reducir logs de TensorFlow
+absl.logging.set_verbosity(absl.logging.ERROR)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 app = Flask(__name__)
 CORS(app)
@@ -24,7 +24,7 @@ UPLOAD_FOLDER = 'static/uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# 1. Definir primero las funciones personalizadas
+# 1. Funciones personalizadas
 def tversky(y_true, y_pred, smooth=1e-6):
     y_true_pos = K.flatten(y_true)
     y_pred_pos = K.flatten(y_pred)
@@ -44,17 +44,16 @@ def focal_tversky(y_true, y_pred):
     gamma = 0.75
     return K.pow((1-pt_1), gamma)
 
+# 2. Carga de modelos
 def load_model_from_parts(parts_folder, custom_objects):
     """Carga el modelo desde partes usando un archivo temporal"""
     try:
         print(f"🔍 Combinando partes del modelo desde '{parts_folder}'...")
         
-        # Crear un archivo temporal
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.hdf5')
         temp_path = temp_file.name
         
         try:
-            # Escribir todas las partes en el archivo temporal
             part_number = 0
             while True:
                 part_path = os.path.join(parts_folder, f"weights_part{part_number}")
@@ -67,7 +66,6 @@ def load_model_from_parts(parts_folder, custom_objects):
                     temp_file.write(f.read())
                 part_number += 1
             
-            # Cerrar el archivo temporal antes de cargarlo
             temp_file.close()
             
             print("⚙️ Cargando modelo desde archivo temporal...")
@@ -76,7 +74,6 @@ def load_model_from_parts(parts_folder, custom_objects):
             return model
             
         finally:
-            # Eliminar el archivo temporal después de cargar el modelo
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
                 
@@ -84,136 +81,103 @@ def load_model_from_parts(parts_folder, custom_objects):
         print(f"❌ Error cargando modelo desde partes: {str(e)}")
         traceback.print_exc()
         return None
-    
-    
-# Cambia la carga de modelos a modo "lite"
-def load_models():
+
+# Inicialización de modelos
+model_class = None
+model_seg = None
+
+def initialize_models():
+    """Inicializa solo el modelo principal al inicio"""
+    global model_class
     try:
-        print("⏳ Cargando versión ligera de modelos...")
-        
-        # Solo carga lo absolutamente necesario
+        print("⏳ Iniciando carga del modelo principal...")
         custom_objects = {
             'tversky_loss': tversky_loss,
-            'focal_tversky': focal_tversky
+            'focal_tversky': focal_tversky,
+            'tversky': tversky
         }
-        
-        # Carga el modelo principal de forma diferida
-        if 'model_class' not in globals():
-            global model_class
-            model_class = load_model_from_parts('weights_parts', custom_objects)
-        
-        return True
+        model_class = load_model_from_parts('weights_parts', custom_objects)
+        return model_class is not None
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        print(f"❌ Error inicializando modelos: {str(e)}")
         return False
-    
-model_class, model_seg = load_models()
 
-# 4. Funciones de procesamiento mejoradas
+# 3. Funciones de procesamiento
 def preprocess_image(image_path):
-    """Preprocesamiento mejorado de imágenes"""
+    """Preprocesamiento optimizado de imágenes"""
     try:
-        img = io.imread(image_path)
+        img = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if img is None:
+            img = io.imread(image_path)
         
-        # Convertir a RGB si es escala de grises
         if len(img.shape) == 2:
             img = np.stack((img,)*3, axis=-1)
         
-        # Normalización mejorada
         img = cv2.resize(img, (256, 256))
         img = img.astype(np.float32) / 255.0
-        img = (img - img.mean()) / (img.std() + 1e-7)
-        
-        return np.expand_dims(img, axis=0)
+        return np.expand_dims((img - img.mean()) / (img.std() + 1e-7), axis=0)
     except Exception as e:
         print(f"Error preprocesando imagen: {str(e)}")
         raise
 
 def postprocess_mask(mask):
-    """Postprocesamiento de la máscara para mejor visualización"""
+    """Postprocesamiento optimizado de máscara"""
     kernel = np.ones((3,3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # Elimina ruido
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel) # Rellena huecos
-    return mask
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 def create_overlay(original_img, mask):
-    """Crear overlay con transparencia mejorada"""
-    if len(original_img.shape) == 2:  # Si es escala de grises
-        overlay_img = cv2.cvtColor(original_img, cv2.COLOR_GRAY2RGBA)
-    else:
-        overlay_img = cv2.cvtColor(original_img, cv2.COLOR_RGB2RGBA)
-    
-    # Crear máscara de color rojo semitransparente
+    """Overlay optimizado"""
+    overlay_img = cv2.cvtColor(original_img, cv2.COLOR_RGB2RGBA) if len(original_img.shape) == 3 else cv2.cvtColor(original_img, cv2.COLOR_GRAY2RGBA)
     red_mask = np.zeros_like(overlay_img)
-    red_mask[mask > 0] = [255, 0, 0, 128]  # RGBA
-    
-    # Combinar overlay
+    red_mask[mask > 0] = [255, 0, 0, 128]
     return cv2.addWeighted(overlay_img, 1, red_mask, 0.7, 0)
 
 def predict_tumor(image_path, model_class, model_seg):
     try:
-        # 1. Preprocesamiento rápido
-        img = cv2.imread(image_path, cv2.IMREAD_COLOR)
-        if img is None:
-            img = io.imread(image_path)
+        img = preprocess_image(image_path)
         
-        # Reducción de tamaño para procesamiento más rápido
-        img = cv2.resize(img, (256, 256))
-        img = img.astype(np.float32) / 255.0
-        img = (img - img.mean()) / (img.std() + 1e-7)
-        img = np.expand_dims(img, axis=0)
-        
-        # 2. Predicción de clasificación
+        # Predicción de clasificación
         class_pred = model_class.predict(img, verbose=0, batch_size=1)
         has_tumor = np.argmax(class_pred) == 1
         accuracy = float(np.max(class_pred))
         
         if not has_tumor:
-            return {
-                'has_tumor': False,
-                'accuracy': accuracy,
-                'mask': None,
-                'overlay_img': None
-            }
+            return {'has_tumor': False, 'accuracy': accuracy, 'mask': None, 'overlay_img': None}
         
-        # 3. Predicción de segmentación (solo si hay tumor)
+        # Predicción de segmentación (solo si hay tumor)
         seg_pred = model_seg.predict(img, verbose=0, batch_size=1)
         mask = (seg_pred.squeeze() > 0.3).astype(np.uint8) * 255
         
-        # 4. Postprocesamiento mínimo
         original_img = cv2.imread(image_path)
-        mask_resized = cv2.resize(mask, (original_img.shape[1], original_img.shape[0]))
-        
         return {
             'has_tumor': True,
             'accuracy': accuracy,
-            'mask': mask_resized,
-            'overlay_img': create_overlay(original_img, mask_resized)
+            'mask': cv2.resize(mask, (original_img.shape[1], original_img.shape[0])),
+            'overlay_img': create_overlay(original_img, mask)
         }
-        
     except Exception as e:
         print(f"Error en predict_tumor: {str(e)}")
         raise
 
-# 6. Rutas de la API
+# 4. Endpoints
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "active", "timestamp": datetime.now().isoformat()})
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    # 1. Verificación inicial de modelos (con carga diferida)
     global model_class, model_seg
     
-    if model_class is None:
-        try:
-            custom_objects = {'tversky_loss': tversky_loss, 'focal_tversky': focal_tversky}
-            model_class = load_model_from_parts('weights_parts', custom_objects)
-        except Exception as e:
-            print(f"🔥 Error cargando modelo principal: {str(e)}")
-            return jsonify({'error': 'Error inicializando modelos'}), 500
+    # Verificación de modelos
+    if model_class is None and not initialize_models():
+        return jsonify({'error': 'Error inicializando modelos'}), 500
     
-    # 2. Validación de archivo (con límite de tamaño)
+    # Validación de archivo
     if 'file' not in request.files:
         return jsonify({'error': 'No se subió ningún archivo'}), 400
         
@@ -221,39 +185,30 @@ def predict():
     if file.filename == '':
         return jsonify({'error': 'Nombre de archivo vacío'}), 400
     
-    # Limitar archivos a 5MB (para evitar sobrecarga)
-    if request.content_length > 5 * 1024 * 1024:  # 5MB
-        return jsonify({'error': 'El archivo es demasiado grande (máx 5MB)'}), 413
-        
     try:
-        # 3. Preparación de directorio
+        # Preparación de directorio
         analysis_id = datetime.now().strftime('%Y%m%d%H%M%S')
         analysis_folder = os.path.join(app.config['UPLOAD_FOLDER'], f"analysis_{analysis_id}")
         os.makedirs(analysis_folder, exist_ok=True)
         
-        # 4. Guardar archivo temporalmente
+        # Guardar archivo
         original_path = os.path.join(analysis_folder, "original.jpg")
         file.save(original_path)
         
-        # 5. Carga diferida del modelo de segmentación
+        # Carga bajo demanda del modelo de segmentación
         if model_seg is None:
             print("⏳ Cargando modelo de segmentación bajo demanda...")
             model_seg = tf.keras.models.load_model(
                 'weights_seg.hdf5',
-                custom_objects={'tversky_loss': tversky_loss, 'focal_tversky': focal_tversky}
+                custom_objects={'tversky_loss': tversky_loss, 'focal_tversky': focal_tversky, 'tversky': tversky}
             )
         
-        # 6. Procesamiento con timeout controlado
+        # Procesamiento
         print(f"⏳ Iniciando predicción para {original_path}...")
-        try:
-            result = predict_tumor(original_path, model_class, model_seg)
-        except Exception as e:
-            print(f"⌛ Timeout en predicción: {str(e)}")
-            return jsonify({'error': 'El análisis tardó demasiado'}), 504
-        
+        result = predict_tumor(original_path, model_class, model_seg)
         print("✅ Predicción completada")
         
-        # 7. Preparar respuesta optimizada
+        # Preparar respuesta
         response = {
             'has_tumor': result['has_tumor'],
             'accuracy': float(result['accuracy']),
@@ -264,7 +219,6 @@ def predict():
             }
         }
         
-        # 8. Guardar resultados solo si hay tumor
         if result['has_tumor']:
             mask_path = os.path.join(analysis_folder, "mask.png")
             cv2.imwrite(mask_path, result['mask'])
@@ -278,25 +232,18 @@ def predict():
         
     except Exception as e:
         print(f"🔥 Error crítico: {str(e)}")
-        traceback.print_exc()
-        return jsonify({
-            'error': 'Error procesando la imagen',
-            'details': str(e)
-        }), 500
-
+        return jsonify({'error': 'Error procesando la imagen', 'details': str(e)}), 500
 
 @app.route('/static/uploads/<path:filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# 7. Rutas para el historial
 @app.route('/api/history')
 def get_history():
     try:
         analyses = []
         upload_dir = app.config['UPLOAD_FOLDER']
         
-        # Ordenar por fecha de modificación (más reciente primero)
         folders = sorted([d for d in os.listdir(upload_dir) if d.startswith('analysis_')], 
                         key=lambda x: os.path.getmtime(os.path.join(upload_dir, x)), 
                         reverse=True)
@@ -304,20 +251,14 @@ def get_history():
         for folder in folders:
             folder_path = os.path.join(upload_dir, folder)
             if os.path.isdir(folder_path):
-                original_img = f"{folder}/original.jpg"
-                timestamp = folder.replace('analysis_', '')
-                timestamp = datetime.strptime(timestamp, '%Y%m%d%H%M%S')
-                
                 analyses.append({
                     'id': folder,
-                    'original': original_img,
-                    'date': timestamp.strftime('%d/%m/%Y %H:%M:%S')
+                    'original': f"{folder}/original.jpg",
+                    'date': datetime.strptime(folder.replace('analysis_', ''), '%Y%m%d%H%M%S').strftime('%d/%m/%Y %H:%M:%S')
                 })
         
         return jsonify({'analyses': analyses})
-    
     except Exception as e:
-        print(f"Error getting history: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/delete/<analysis_id>', methods=['DELETE'])
@@ -330,23 +271,24 @@ def delete_analysis(analysis_id):
             return jsonify({'success': True})
         return jsonify({'error': 'Analysis not found'}), 404
     except Exception as e:
-        print(f"Error deleting analysis: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.before_request
 def before_request():
-    # Limita el tamaño de archivo a 5MB
     max_size = 5 * 1024 * 1024  # 5MB
-    if request.content_length > max_size:
-        return jsonify({"error": "El archivo es demasiado grande"}), 413
+    if request.content_length and request.content_length > max_size:
+        return jsonify({"error": "El archivo es demasiado grande (máx 5MB)"}), 413
 
 if __name__ == '__main__':
     if not os.path.exists('templates'):
         os.makedirs('templates')
     
-    # Configuración específica para Render
-    port = int(os.environ.get("PORT", 10000))  # Render usa puerto 10000
-    debug_mode = False  # Siempre False en producción
+    # Inicialización ligera
+    initialize_models()
+    
+    # Configuración para Render
+    port = int(os.environ.get("PORT", 10000))
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
     
     print(f"🚀 Iniciando servidor Flask en puerto {port}...")
     app.run(host='0.0.0.0', port=port, debug=debug_mode)
