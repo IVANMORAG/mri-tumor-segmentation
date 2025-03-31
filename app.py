@@ -1,60 +1,35 @@
+from flask import Flask
+from flask_cors import CORS
+from src.config import Config
+from src.models.loader import ModelLoader
+from src.routes.api import setup_api_routes
+from src.routes.views import setup_view_routes
+from src.utils.ngrok import start_ngrok
+import threading
 import os
-from flask import Flask, render_template, request, redirect, url_for
-from werkzeug.utils import secure_filename
-from processing.tumor_detector import TumorDetector
-from processing.image_processor import generate_visualizations
 
-app = Flask(__name__)
-
-# Configuración
-UPLOAD_FOLDER = 'static/uploads'
-RESULT_FOLDER = 'static/results'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'dcm'}
-
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['RESULT_FOLDER'] = RESULT_FOLDER
-
-# Crear directorios si no existen
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESULT_FOLDER, exist_ok=True)
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-@app.route('/', methods=['GET', 'POST'])
-def upload_file():
-    if request.method == 'POST':
-        if 'file' not in request.files:
-            return redirect(request.url)
-        
-        file = request.files['file']
-        if file.filename == '':
-            return redirect(request.url)
-        
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            
-            # Procesamiento de la imagen
-            detector = TumorDetector()
-            result = detector.detect_tumor(filepath)
-            
-            # Generar visualizaciones
-            base_name = os.path.splitext(filename)[0]
-            result_images = generate_visualizations(
-                filepath, 
-                app.config['RESULT_FOLDER'], 
-                base_name
-            )
-            
-            return render_template('index.html',
-                                original_image=filepath,
-                                result_images=result_images,
-                                has_tumor=result['has_tumor'],
-                                confidence=f"{result['confidence']:.2f}%")
+def create_app():
+    app = Flask(__name__)
+    CORS(app)
     
-    return render_template('index.html')
+    # Configuración
+    Config.init_app(app)
+    app.config.from_object(Config)
+    
+    # Cargar modelos
+    model_class, model_seg = ModelLoader.load_models()
+    
+    # Configurar rutas
+    setup_api_routes(app, model_class, model_seg)
+    setup_view_routes(app)
+    
+    return app
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app = create_app()
+    
+    # Iniciar ngrok en un hilo separado
+    start_ngrok(Config.NGROK_DOMAIN, Config.FLASK_PORT)
+    
+    print("🚀 Iniciando servidor Flask...")
+    app.run(host='0.0.0.0', port=Config.FLASK_PORT, debug=True)
