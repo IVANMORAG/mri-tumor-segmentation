@@ -14,10 +14,6 @@ A **Flask-based web application** for detecting and segmenting brain tumors in M
   - [⚙️ Installation](#️-installation)
     - [Prerequisites](#prerequisites)
     - [Steps](#steps)
-- [Clone repo](#clone-repo)
-- [Create virtual environment](#create-virtual-environment)
-- [Install dependencies](#install-dependencies)
-- [Run the app](#run-the-app)
   - [📂 Project Structure](#-project-structure)
   - [🔍 How It Works](#-how-it-works)
 
@@ -51,6 +47,7 @@ pip install -r requirements.txt
 
 # Run the app
 python app.py
+```
 
 ## 📂 Project Structure
 
